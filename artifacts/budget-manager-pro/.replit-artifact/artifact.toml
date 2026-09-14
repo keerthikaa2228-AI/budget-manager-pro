@@ -1,0 +1,23 @@
+kind = "mobile"
+previewPath = "/budget-manager-pro/"
+title = "Budget Manager Pro"
+version = "1.0.0"
+id = "artifacts/budget-manager-pro"
+router = "expo-domain"
+
+[[services]]
+name = "expo"
+ensurePreviewReachable = "/status"
+paths = [ "/budget-manager-pro/" ]
+localPort = 18963
+
+[services.development]
+run = "pnpm --filter @workspace/budget-manager-pro run dev"
+
+[services.production]
+build = [ "pnpm", "--filter", "@workspace/budget-manager-pro", "run", "build" ]
+run = [ "pnpm", "--filter", "@workspace/budget-manager-pro", "run", "serve" ]
+
+[services.env]
+PORT = "18963"
+BASE_PATH = "/budget-manager-pro/"
