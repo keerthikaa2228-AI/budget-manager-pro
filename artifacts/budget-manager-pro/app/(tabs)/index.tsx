@@ -53,11 +53,13 @@ export default function DashboardScreen() {
     if (hasAIAssistant) {
       router.push('/assistant');
     } else {
-      const opened = await showAIAssistantPaywall();
-      if (!opened) {
+        const outcome = await showAIAssistantPaywall();
+        if (outcome === 'unavailable' || outcome === 'error') {
         Alert.alert(
-          'AI Assistant is being prepared',
-          'The AI subscription offerings are not available yet. Finish the RevenueCat setup to unlock this feature.',
+            outcome === 'unavailable' ? 'AI Assistant is unavailable' : 'Could not open purchase',
+            outcome === 'unavailable'
+              ? 'A suitable monthly AI offering is not available yet. Please try again later.'
+              : 'The AI Assistant purchase screen could not be opened. Please try again.',
         );
       }
     }

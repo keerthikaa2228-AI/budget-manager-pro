@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   FlatList,
@@ -34,6 +34,8 @@ export default function AssistantScreen() {
     isLoading: subscriptionLoading,
   } = useSubscription();
   const [input, setInput] = useState('');
+  const [paywallMessage, setPaywallMessage] = useState<string | null>(null);
+  const [isPresentingPaywall, setIsPresentingPaywall] = useState(false);
   const [messages, setMessages] = useState<Message[]>([
     {
       id: 'welcome',
@@ -42,12 +44,32 @@ export default function AssistantScreen() {
     },
   ]);
   const listRef = useRef<FlatList<Message>>(null);
+  const autoPaywallAttempted = useRef(false);
+
+  const openAIAssistantPaywall = useCallback(async () => {
+    setPaywallMessage(null);
+    setIsPresentingPaywall(true);
+    try {
+      const result = await showAIAssistantPaywall();
+      if (result === 'unavailable') {
+        setPaywallMessage('AI offerings are not available yet. Please try again later.');
+      } else if (result === 'dismissed') {
+        setPaywallMessage('Purchase not completed. You can try again whenever you’re ready.');
+      } else if (result === 'error') {
+        setPaywallMessage('The purchase screen could not be opened. Please try again.');
+      } else {
+        setPaywallMessage('Purchase completed. Your assistant access is updating.');
+      }
+    } finally {
+      setIsPresentingPaywall(false);
+    }
+  }, [showAIAssistantPaywall]);
 
   useEffect(() => {
-    if (!subscriptionLoading && !hasAIAssistant) {
-      showAIAssistantPaywall();
-    }
-  }, [subscriptionLoading, hasAIAssistant, showAIAssistantPaywall]);
+    if (subscriptionLoading || hasAIAssistant || autoPaywallAttempted.current) return;
+    autoPaywallAttempted.current = true;
+    void openAIAssistantPaywall();
+  }, [subscriptionLoading, hasAIAssistant, openAIAssistantPaywall]);
 
   const send = () => {
     const question = input.trim();
@@ -99,12 +121,27 @@ export default function AssistantScreen() {
           <Text style={[styles.lockedCopy, { color: colors.mutedForeground }]}>
             Unlock the AI Assistant subscription to get spending breakdowns, savings tips, and income ideas.
           </Text>
+          {paywallMessage && (
+            <Text
+              style={[styles.paywallMessage, { color: colors.mutedForeground }]}
+              accessibilityRole="alert"
+            >
+              {paywallMessage}
+            </Text>
+          )}
           <TouchableOpacity
             style={[styles.unlockButton, { backgroundColor: colors.primary }]}
-            onPress={showAIAssistantPaywall}
+            onPress={() => void openAIAssistantPaywall()}
+            disabled={isPresentingPaywall || subscriptionLoading}
           >
-            <Feather name="zap" size={16} color="#fff" />
-            <Text style={styles.unlockButtonText}>Unlock AI Assistant</Text>
+            {isPresentingPaywall ? (
+              <ActivityIndicator size="small" color="#fff" />
+            ) : (
+              <Feather name="zap" size={16} color="#fff" />
+            )}
+            <Text style={styles.unlockButtonText}>
+              {isPresentingPaywall ? 'Opening purchase…' : 'Unlock AI Assistant'}
+            </Text>
           </TouchableOpacity>
         </View>
       ) : (
@@ -179,6 +216,7 @@ const styles = StyleSheet.create({
   lockedIcon: { width: 68, height: 68, borderRadius: 22, alignItems: 'center', justifyContent: 'center', marginBottom: 4 },
   lockedTitle: { fontSize: 22, fontFamily: 'Inter_700Bold', textAlign: 'center' },
   lockedCopy: { fontSize: 14, lineHeight: 21, textAlign: 'center', fontFamily: 'Inter_400Regular', maxWidth: 320 },
+  paywallMessage: { fontSize: 13, lineHeight: 19, textAlign: 'center', fontFamily: 'Inter_500Medium', maxWidth: 320 },
   unlockButton: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingHorizontal: 22, paddingVertical: 14, borderRadius: 14, marginTop: 6 },
   unlockButtonText: { color: '#fff', fontSize: 15, fontFamily: 'Inter_700Bold' },
 });

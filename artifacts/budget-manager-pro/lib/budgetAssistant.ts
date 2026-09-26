@@ -1,4 +1,5 @@
-import { CATEGORIES, Transaction, categoryById } from '@/contexts/BudgetContext';
+import { CATEGORIES, categoryById } from '@/contexts/BudgetContext';
+import type { Transaction } from '@/contexts/BudgetContext';
 
 export interface AssistantTip {
   id: string;
@@ -45,9 +46,10 @@ function shiftMonth(date: Date, amount: number): Date {
   return next;
 }
 
-function monthKeysBeforeCurrent(count: number): string[] {
-  const now = new Date();
-  return Array.from({ length: count }, (_, index) => monthKey(shiftMonth(now, -(index + 1))));
+function monthKeysBeforeCurrent(count: number, referenceDate: Date): string[] {
+  return Array.from({ length: count }, (_, index) =>
+    monthKey(shiftMonth(referenceDate, -(index + 1))),
+  );
 }
 
 function expenseTotal(transactions: Transaction[], key: string, categoryId?: string): number {
@@ -61,8 +63,8 @@ function expenseTotal(transactions: Transaction[], key: string, categoryId?: str
     .reduce((total, transaction) => total + transaction.amount, 0);
 }
 
-function currentTotals(transactions: Transaction[]) {
-  const key = monthKey(new Date());
+function currentTotals(transactions: Transaction[], referenceDate: Date) {
+  const key = monthKey(referenceDate);
   const current = transactions.filter((transaction) => transaction.date.startsWith(key));
   const income = current
     .filter((transaction) => transaction.type === 'income')
@@ -73,14 +75,16 @@ function currentTotals(transactions: Transaction[]) {
   return { key, income, expenses };
 }
 
-function buildOverspending(transactions: Transaction[], currentKey: string) {
-  const historyKeys = monthKeysBeforeCurrent(3);
+function buildOverspending(transactions: Transaction[], currentKey: string, referenceDate: Date) {
+  const historyKeys = monthKeysBeforeCurrent(3, referenceDate);
   const categoriesWithHistory = CATEGORIES.filter((category) =>
     historyKeys.some((key) => expenseTotal(transactions, key, category.id) > 0),
   );
 
   return categoriesWithHistory
     .map((category) => {
+      // Months without recorded spending in this category are not observations
+      // and must not lower the category's typical-spend average.
       const historicalValues = historyKeys
         .map((key) => expenseTotal(transactions, key, category.id))
         .filter((value) => value > 0);
@@ -105,9 +109,12 @@ function buildOverspending(transactions: Transaction[], currentKey: string) {
     .sort((a, b) => b.increasePercent - a.increasePercent);
 }
 
-function buildIncomeNudge(transactions: Transaction[]): AssistantAnalysis['incomeNudge'] {
+function buildIncomeNudge(
+  transactions: Transaction[],
+  referenceDate: Date,
+): AssistantAnalysis['incomeNudge'] {
   const incomeTransactions = transactions.filter((transaction) => transaction.type === 'income');
-  const historyKeys = monthKeysBeforeCurrent(3);
+  const historyKeys = monthKeysBeforeCurrent(3, referenceDate);
   const recurring = incomeTransactions.filter((transaction) => {
     const matchingMonths = new Set(
       incomeTransactions
@@ -127,7 +134,7 @@ function buildIncomeNudge(transactions: Transaction[]): AssistantAnalysis['incom
         `${transaction.title.trim().toLowerCase()}|${transaction.categoryId}|${transaction.amount.toFixed(2)}`,
     ),
   );
-  const currentKey = monthKey(new Date());
+  const currentKey = monthKey(referenceDate);
   const hasOnlyOneRecurringSource =
     patterns.size === 1 &&
     historyKeys.some((key) => recurring.some((transaction) => transaction.date.startsWith(key))) &&
@@ -153,9 +160,12 @@ function buildIncomeNudge(transactions: Transaction[]): AssistantAnalysis['incom
   };
 }
 
-export function analyzeBudget(transactions: Transaction[]): AssistantAnalysis {
-  const totals = currentTotals(transactions);
-  const overspending = buildOverspending(transactions, totals.key);
+export function analyzeBudget(
+  transactions: Transaction[],
+  referenceDate: Date = new Date(),
+): AssistantAnalysis {
+  const totals = currentTotals(transactions, referenceDate);
+  const overspending = buildOverspending(transactions, totals.key, referenceDate);
   const netSavings = totals.income - totals.expenses;
   const savingsRate = totals.income > 0 ? netSavings / totals.income : null;
   const highestOverspend = overspending[0];
@@ -173,7 +183,7 @@ export function analyzeBudget(transactions: Transaction[]): AssistantAnalysis {
       : savingsRate !== null && savingsRate >= 0.2
         ? `Great job — you're saving ${Math.round(savingsRate * 100)}% this month, above the recommended 20%.`
         : null;
-  const incomeNudge = buildIncomeNudge(transactions);
+  const incomeNudge = buildIncomeNudge(transactions, referenceDate);
 
   const tips: AssistantTip[] = [];
   if (overspending[0]) {
@@ -200,15 +210,6 @@ export function analyzeBudget(transactions: Transaction[]): AssistantAnalysis {
       kind: 'education',
     });
   }
-  if (tips.length === 0 && transactions.length > 0) {
-    tips.push({
-      id: 'income-nudge-occasional',
-      title: 'Build toward your goals',
-      body: incomeNudge.message,
-      kind: 'education',
-    });
-  }
-
   return {
     overspending,
     savings: {
@@ -224,20 +225,31 @@ export function analyzeBudget(transactions: Transaction[]): AssistantAnalysis {
   };
 }
 
-export function getRotatingTips(transactions: Transaction[]): AssistantTip[] {
-  const tips = analyzeBudget(transactions).tips;
+export function getRotatingTips(
+  transactions: Transaction[],
+  referenceDate: Date = new Date(),
+): AssistantTip[] {
+  const tips = analyzeBudget(transactions, referenceDate).tips;
   if (tips.length < 2) return tips;
-  const day = new Date().getDate();
+  const day = referenceDate.getDate();
   const start = day % tips.length;
   return [tips[start], tips[(start + 1) % tips.length]];
 }
 
-export function answerAssistantQuestion(transactions: Transaction[], question: string): string {
+export function answerAssistantQuestion(
+  transactions: Transaction[],
+  question: string,
+  referenceDate: Date = new Date(),
+): string {
   const normalized = question.trim().toLowerCase();
-  const analysis = analyzeBudget(transactions);
-  const currentKey = monthKey(new Date());
+  const analysis = analyzeBudget(transactions, referenceDate);
+  const currentKey = monthKey(referenceDate);
 
-  if (normalized.includes('expense') || normalized.includes('spend')) {
+  if (
+    normalized.includes('expense') ||
+    normalized.includes('spend') ||
+    normalized.includes('spent')
+  ) {
     const topCategories = CATEGORIES.map((category) => ({
       name: category.name,
       amount: expenseTotal(transactions, currentKey, category.id),

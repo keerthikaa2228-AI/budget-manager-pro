@@ -1,7 +1,8 @@
-import React, { createContext, useCallback, useContext } from 'react';
+import React, { createContext, useCallback, useContext, useEffect, useMemo } from 'react';
 import Purchases, { PurchasesOffering, PurchasesPackage } from 'react-native-purchases';
 import RevenueCatUI, { PAYWALL_RESULT } from 'react-native-purchases-ui';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { selectAIAssistantOffering } from '@/lib/revenuecatSelection';
 
 const REVENUECAT_API_KEY = process.env.EXPO_PUBLIC_REVENUECAT_API_KEY ?? '';
 
@@ -9,45 +10,12 @@ const REVENUECAT_API_KEY = process.env.EXPO_PUBLIC_REVENUECAT_API_KEY ?? '';
 export const REVENUECAT_ENTITLEMENT_IDENTIFIER = 'premium';
 export const REVENUECAT_AI_ENTITLEMENT_IDENTIFIER = 'ai_assistant';
 
-const AI_PRODUCT_MARKERS = ['ai_assistant', 'ai-assistant', 'aiassistant'];
-const DISCOUNTED_AI_MARKERS = ['premium', 'discount', 'lifetime'];
-
-function packageLooksLikeAI(pkg: PurchasesPackage): boolean {
-  const identifier = pkg.product.identifier.toLowerCase();
-  return AI_PRODUCT_MARKERS.some((marker) => identifier.includes(marker));
-}
-
-function offeringLooksLikeAI(offering: PurchasesOffering): boolean {
-  return offering.availablePackages.some(packageLooksLikeAI);
-}
-
-function findAIOffering(
-  offerings: { current: PurchasesOffering | null; all: Record<string, PurchasesOffering> },
-  hasPremium: boolean,
-): PurchasesOffering | null {
-  const candidates = Object.values(offerings.all).filter(offeringLooksLikeAI);
-  const preferred = candidates.find((offering) => {
-    const identifier = offering.identifier.toLowerCase();
-    const hasDiscountMarker = DISCOUNTED_AI_MARKERS.some((marker) => identifier.includes(marker));
-    return hasPremium ? hasDiscountMarker : !hasDiscountMarker;
-  });
-  return preferred ?? candidates[0] ?? (
-    offerings.current && offeringLooksLikeAI(offerings.current)
-      ? offerings.current
-      : null
-  );
-}
-
-function findAIPackage(offering: PurchasesOffering | null, hasPremium: boolean): PurchasesPackage | null {
-  if (!offering) return null;
-  const packages = offering.availablePackages.filter(packageLooksLikeAI);
-  const preferred = packages.find((pkg) => {
-    const identifier = pkg.product.identifier.toLowerCase();
-    const hasDiscountMarker = DISCOUNTED_AI_MARKERS.some((marker) => identifier.includes(marker));
-    return hasPremium ? hasDiscountMarker : !hasDiscountMarker;
-  });
-  return preferred ?? packages[0] ?? null;
-}
+export type AIAssistantPaywallResult =
+  | 'purchased'
+  | 'restored'
+  | 'dismissed'
+  | 'unavailable'
+  | 'error';
 
 /**
  * Call once at module level in app/_layout.tsx (outside any component).
@@ -108,10 +76,21 @@ function useSubscriptionContext() {
     customerInfoQuery.data?.entitlements.active?.[REVENUECAT_AI_ENTITLEMENT_IDENTIFIER] !==
     undefined;
   const hasPremium = isSubscribed;
-  const aiAssistantOffering = offeringsQuery.data
-    ? findAIOffering(offeringsQuery.data, hasPremium)
-    : null;
-  const aiAssistantPackage = findAIPackage(aiAssistantOffering, hasPremium);
+  const aiAssistantSelection = useMemo(
+    () =>
+      selectAIAssistantOffering<PurchasesPackage, PurchasesOffering>(
+        offeringsQuery.data,
+        hasPremium,
+      ),
+    [offeringsQuery.data, hasPremium],
+  );
+  const aiAssistantOffering = aiAssistantSelection.offering;
+  const aiAssistantPackage = aiAssistantSelection.package;
+
+  useEffect(() => {
+    if (!offeringsQuery.data) return;
+    aiAssistantSelection.diagnostics.forEach((diagnostic) => console.warn(diagnostic));
+  }, [aiAssistantSelection.diagnostics, offeringsQuery.data]);
 
   /**
    * Present the RevenueCat native Paywall UI (reads your dashboard template).
@@ -137,29 +116,36 @@ function useSubscriptionContext() {
    * monthly offerings: a standard one and a premium-holder discount variant.
    * The selected offering is based only on the active premium entitlement.
    */
-  const showAIAssistantPaywall = useCallback(async (): Promise<boolean> => {
+  const showAIAssistantPaywall = useCallback(async (): Promise<AIAssistantPaywallResult> => {
     if (!aiAssistantOffering || !aiAssistantPackage) {
-      console.warn(
-        '[RevenueCat] AI Assistant offering is not configured. Add the standard and premium monthly offerings before presenting this paywall.',
-      );
-      return false;
+      if (!offeringsQuery.data) {
+        console.warn(
+          '[RevenueCat] RevenueCat offerings could not be loaded; the AI Assistant paywall is unavailable.',
+        );
+      }
+      return 'unavailable';
     }
     try {
       const result = await RevenueCatUI.presentPaywall({
         offering: aiAssistantOffering,
         displayCloseButton: true,
       });
-      const purchased =
-        result === PAYWALL_RESULT.PURCHASED || result === PAYWALL_RESULT.RESTORED;
-      if (purchased) {
+      if (result === PAYWALL_RESULT.PURCHASED) {
         queryClient.invalidateQueries({ queryKey: ['revenuecat', 'customer-info'] });
+        return 'purchased';
       }
-      return purchased;
+      if (result === PAYWALL_RESULT.RESTORED) {
+        queryClient.invalidateQueries({ queryKey: ['revenuecat', 'customer-info'] });
+        return 'restored';
+      }
+      if (result === PAYWALL_RESULT.CANCELLED) return 'dismissed';
+      console.warn('[RevenueCat] AI Assistant paywall returned an unsuccessful result:', result);
+      return 'error';
     } catch (e) {
       console.warn('[RevenueCat] AI Assistant paywall error:', e);
-      return false;
+      return 'error';
     }
-  }, [aiAssistantOffering, aiAssistantPackage, queryClient]);
+  }, [aiAssistantOffering, aiAssistantPackage, offeringsQuery.data, queryClient]);
 
   /** Manual fallback purchase for the exact standard/discounted AI package. */
   const purchaseAIAssistant = useCallback(async () => {
@@ -208,7 +194,7 @@ function useSubscriptionContext() {
     hasAIAssistant,
     aiAssistantOffering,
     aiAssistantPackage,
-    isAIAssistantDiscounted: hasPremium && !!aiAssistantPackage,
+    isAIAssistantDiscounted: aiAssistantSelection.isDiscounted,
     isLoading: customerInfoQuery.isLoading || offeringsQuery.isLoading,
     purchase: purchaseMutation.mutateAsync,
     restore: restoreMutation.mutateAsync,
