@@ -1,7 +1,10 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import type { Budget, Transaction } from '../contexts/BudgetContext';
-import { calculateSpendingTwin } from '../lib/spendingTwin';
+import {
+  calculateSpendingTwin,
+  describeSpendingTwinChange,
+} from '../lib/spendingTwin';
 
 const REFERENCE_DATE = new Date(2026, 8, 10, 12);
 
@@ -118,4 +121,35 @@ test('marks a projection over budget and combines valid category budgets', () =>
   assert.equal(result.projectedMonthEnd, 1_800);
   assert.equal(result.budgetVariance, -1_050);
   assert.equal(result.trajectoryStatus, 'over-budget');
+});
+
+test('describes a category running above its usual recent pace', () => {
+  const result = describeSpendingTwinChange(
+    [
+      transaction('old-food-1', '2026-08-25', 100),
+      transaction('old-food-2', '2026-08-18', 120),
+      transaction('old-food-3', '2026-08-11', 80),
+      transaction('old-food-4', '2026-08-04', 100),
+      transaction('recent-food', '2026-09-10', 400),
+    ],
+    REFERENCE_DATE,
+  );
+
+  assert.ok(result);
+  assert.equal(result.categoryId, 'food');
+  assert.equal(result.currentWeekSpend, 400);
+  assert.equal(result.usualWeeklySpend, 100);
+  assert.equal(result.changeAmount, 300);
+  assert.match(result.description, /Food & Dining is up ₹300/);
+});
+
+test('does not invent a usual pace when recent history is incomplete', () => {
+  const result = describeSpendingTwinChange(
+    [transaction('recent-food', '2026-09-10', 400)],
+    REFERENCE_DATE,
+  );
+
+  assert.ok(result);
+  assert.equal(result.usualWeeklySpend, null);
+  assert.match(result.description, /More history will sharpen the comparison/);
 });

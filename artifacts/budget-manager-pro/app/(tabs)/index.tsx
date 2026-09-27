@@ -17,7 +17,12 @@ import { useBudget } from '@/contexts/BudgetContext';
 import { TransactionItem } from '@/components/TransactionItem';
 import { AddTransactionModal } from '@/components/AddTransactionModal';
 import { AIAssistantCard } from '@/components/AIAssistantCard';
+import { SpendingTwinCard } from '@/components/SpendingTwinCard';
 import { getRotatingTips } from '@/lib/budgetAssistant';
+import {
+  calculateSpendingTwin,
+  describeSpendingTwinChange,
+} from '@/lib/spendingTwin';
 import { useSubscription } from '@/lib/revenuecat';
 import { router } from 'expo-router';
 
@@ -36,7 +41,14 @@ function greeting() {
 export default function DashboardScreen() {
   const colors = useColors();
   const insets = useSafeAreaInsets();
-  const { transactions, recentTransactions, getMonthlyTotals, deleteTransaction, addTransaction } = useBudget();
+  const {
+    transactions,
+    budgets,
+    recentTransactions,
+    getMonthlyTotals,
+    deleteTransaction,
+    addTransaction,
+  } = useBudget();
   const { hasAIAssistant, showAIAssistantPaywall } = useSubscription();
   const [showAdd, setShowAdd] = useState(false);
 
@@ -44,6 +56,8 @@ export default function DashboardScreen() {
   const monthKey = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
   const { income, expense, net } = getMonthlyTotals(monthKey);
   const isPositive = net >= 0;
+  const spendingTwin = calculateSpendingTwin(transactions, budgets, now);
+  const spendingTwinChange = describeSpendingTwinChange(transactions, now);
 
   const topPad = Platform.OS === 'web' ? Math.max(insets.top, 67) : insets.top;
   const bottomPad = Platform.OS === 'web' ? 84 + 34 : 84;
@@ -142,6 +156,11 @@ export default function DashboardScreen() {
                 </View>
               </View>
             </LinearGradient>
+
+            <SpendingTwinCard
+              projection={spendingTwin}
+              change={spendingTwinChange}
+            />
 
             {/* Proactive local insights */}
             <AIAssistantCard
