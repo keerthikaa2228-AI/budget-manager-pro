@@ -19,7 +19,9 @@ import { AddTransactionModal } from '@/components/AddTransactionModal';
 import { AIAssistantCard } from '@/components/AIAssistantCard';
 import { SpendingTwinCard } from '@/components/SpendingTwinCard';
 import { WhatIfSimulator } from '@/components/WhatIfSimulator';
+import { MoneyPatternCard } from '@/components/MoneyPatternCard';
 import { getRotatingTips } from '@/lib/budgetAssistant';
+import { analyzeMoneyPattern } from '@/lib/moneyPersona';
 import {
   calculateSpendingTwin,
   describeSpendingTwinChange,
@@ -59,6 +61,7 @@ export default function DashboardScreen() {
   const isPositive = net >= 0;
   const spendingTwin = calculateSpendingTwin(transactions, budgets, now);
   const spendingTwinChange = describeSpendingTwinChange(transactions, now);
+  const moneyPattern = analyzeMoneyPattern(transactions);
 
   const topPad = Platform.OS === 'web' ? Math.max(insets.top, 67) : insets.top;
   const bottomPad = Platform.OS === 'web' ? 84 + 34 : 84;
@@ -167,6 +170,11 @@ export default function DashboardScreen() {
               transactions={transactions}
               budgets={budgets}
               referenceDate={now}
+            />
+            <MoneyPatternCard
+              analysis={moneyPattern}
+              locked={!hasAIAssistant}
+              onUnlock={openAssistant}
             />
 
             {/* Proactive local insights */}
