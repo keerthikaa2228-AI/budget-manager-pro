@@ -27,6 +27,20 @@ export interface SpendingTwinChange {
   description: string;
 }
 
+export interface SpendingTwinCategory {
+  categoryId: string;
+  categoryName: string;
+  currentMonthSpend: number;
+}
+
+export interface SpendingTwinScenario {
+  categoryId: string;
+  weeklyReduction: number;
+  appliedWeeklyReduction: number;
+  projectedMonthEnd: number;
+  projectedSavings: number;
+}
+
 const DAY_MS = 24 * 60 * 60 * 1_000;
 
 function monthKey(referenceDate: Date): string {
@@ -116,6 +130,39 @@ function referenceDayTimestamp(referenceDate: Date): number {
   );
 }
 
+function currentMonthCategoryTotals(
+  transactions: readonly Transaction[],
+  referenceDate: Date,
+): Map<string, number> {
+  const startTimestamp = Date.UTC(
+    referenceDate.getFullYear(),
+    referenceDate.getMonth(),
+    1,
+  );
+  const endTimestamp = referenceDayTimestamp(referenceDate);
+  const totals = categoryTotalsBetween(transactions, startTimestamp, endTimestamp);
+
+  return new Map(
+    Array.from(totals.entries()).map(([categoryId, value]) => [
+      categoryId,
+      value.amount,
+    ]),
+  );
+}
+
+export function getSpendingTwinCategories(
+  transactions: readonly Transaction[],
+  referenceDate: Date = new Date(),
+): SpendingTwinCategory[] {
+  return Array.from(currentMonthCategoryTotals(transactions, referenceDate).entries())
+    .map(([categoryId, currentMonthSpend]) => ({
+      categoryId,
+      categoryName: categoryById(categoryId).name,
+      currentMonthSpend,
+    }))
+    .sort((a, b) => b.currentMonthSpend - a.currentMonthSpend);
+}
+
 /**
  * Explains the most useful local spending change for the last seven days.
  *
@@ -202,6 +249,52 @@ export function describeSpendingTwinChange(
     changePercent: selected.changePercent,
     transactionCount: selected.count,
     description,
+  };
+}
+
+/**
+ * Calculates a hypothetical weekly reduction without changing transactions.
+ * The reduction lowers only the selected category's future daily pace and is
+ * capped at that category's observed pace, so the scenario never creates
+ * negative spending.
+ */
+export function calculateSpendingTwinScenario(
+  projection: SpendingTwinProjection,
+  transactions: readonly Transaction[],
+  categoryId: string,
+  weeklyReduction: number,
+  referenceDate: Date = new Date(),
+): SpendingTwinScenario | null {
+  const category = getSpendingTwinCategories(transactions, referenceDate).find(
+    (item) => item.categoryId === categoryId,
+  );
+  if (!category || !Number.isFinite(weeklyReduction) || weeklyReduction < 0) {
+    return null;
+  }
+
+  const categoryDailyPace =
+    category.currentMonthSpend / projection.elapsedDays;
+  const requestedDailyReduction = weeklyReduction / 7;
+  const appliedDailyReduction = Math.min(
+    categoryDailyPace,
+    requestedDailyReduction,
+  );
+  const projectedMonthEnd = Math.max(
+    projection.spendingSoFar,
+    projection.spendingSoFar +
+      (projection.averageDailyExpensePace - appliedDailyReduction) *
+        projection.remainingDays,
+  );
+
+  return {
+    categoryId,
+    weeklyReduction,
+    appliedWeeklyReduction: appliedDailyReduction * 7,
+    projectedMonthEnd,
+    projectedSavings: Math.max(
+      0,
+      projection.projectedMonthEnd - projectedMonthEnd,
+    ),
   };
 }
 

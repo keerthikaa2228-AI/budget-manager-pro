@@ -18,6 +18,7 @@ import { TransactionItem } from '@/components/TransactionItem';
 import { AddTransactionModal } from '@/components/AddTransactionModal';
 import { AIAssistantCard } from '@/components/AIAssistantCard';
 import { SpendingTwinCard } from '@/components/SpendingTwinCard';
+import { WhatIfSimulator } from '@/components/WhatIfSimulator';
 import { getRotatingTips } from '@/lib/budgetAssistant';
 import {
   calculateSpendingTwin,
@@ -160,6 +161,12 @@ export default function DashboardScreen() {
             <SpendingTwinCard
               projection={spendingTwin}
               change={spendingTwinChange}
+            />
+            <WhatIfSimulator
+              projection={spendingTwin}
+              transactions={transactions}
+              budgets={budgets}
+              referenceDate={now}
             />
 
             {/* Proactive local insights */}

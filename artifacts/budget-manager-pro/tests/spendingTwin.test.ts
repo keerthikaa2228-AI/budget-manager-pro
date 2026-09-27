@@ -3,7 +3,9 @@ import test from 'node:test';
 import type { Budget, Transaction } from '../contexts/BudgetContext';
 import {
   calculateSpendingTwin,
+  calculateSpendingTwinScenario,
   describeSpendingTwinChange,
+  getSpendingTwinCategories,
 } from '../lib/spendingTwin';
 
 const REFERENCE_DATE = new Date(2026, 8, 10, 12);
@@ -152,4 +154,38 @@ test('does not invent a usual pace when recent history is incomplete', () => {
   assert.ok(result);
   assert.equal(result.usualWeeklySpend, null);
   assert.match(result.description, /More history will sharpen the comparison/);
+});
+
+test('calculates a hypothetical category reduction without changing the live projection', () => {
+  const transactions = [
+    transaction('food-one', '2026-09-02', 100),
+    transaction('food-two', '2026-09-10', 200),
+  ];
+  const projection = calculateSpendingTwin(transactions, [], REFERENCE_DATE);
+  const categories = getSpendingTwinCategories(transactions, REFERENCE_DATE);
+  const scenario = calculateSpendingTwinScenario(
+    projection,
+    transactions,
+    categories[0].categoryId,
+    70,
+    REFERENCE_DATE,
+  );
+
+  assert.equal(categories[0].currentMonthSpend, 300);
+  assert.ok(scenario);
+  assert.equal(scenario.projectedMonthEnd, 700);
+  assert.equal(scenario.projectedSavings, 200);
+  assert.equal(projection.projectedMonthEnd, 900);
+  assert.equal(transactions[0].amount, 100);
+  assert.equal(transactions[1].amount, 200);
+});
+
+test('returns no scenario when there are no current expense categories', () => {
+  const projection = calculateSpendingTwin([], [], REFERENCE_DATE);
+
+  assert.deepEqual(getSpendingTwinCategories([], REFERENCE_DATE), []);
+  assert.equal(
+    calculateSpendingTwinScenario(projection, [], 'food', 200, REFERENCE_DATE),
+    null,
+  );
 });
